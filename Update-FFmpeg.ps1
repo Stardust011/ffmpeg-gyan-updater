@@ -1,745 +1,571 @@
-# FFmpeg Git Auto Updater
-
-基于 PowerShell 的 Windows FFmpeg 自动更新脚本，使用 Gyan.dev 提供的 FFmpeg Git Builds。
-
-脚本会自动检测本机已有的 FFmpeg，判断其构建类型和版本，并只在确实需要更新时下载新的 FFmpeg。
-
-## 特性
-
-- 支持 Gyan.dev FFmpeg Git Builds
-- 支持 Essentials 和 Full 两种构建
-- 支持自动检测当前 FFmpeg 构建类型
-- 支持通过参数强制指定构建类型
-- 自动在以下位置搜索 FFmpeg：
-  - Update-FFmpeg.ps1 所在目录
-  - 该目录的所有子目录
-  - 系统 PATH
-- 不要求 FFmpeg 安装目录名称必须为 ffmpeg
-- 自动识别 FFmpeg 实际安装根目录
-- 已经是最新版时不下载文件
-- 已经是最新版时不会额外请求 SHA-256
-- 支持 SHA-256 校验
-- 下载支持断点续传
-- 使用 .part 文件保存未完成的下载
-- 下载完成后才重命名为正式 .7z
-- 下载失败时保留 .part
-- SHA-256 校验失败时不会安装
-- 安装失败时保留 .7z
-- 安装成功后自动删除 .7z
-- 自动检测 7-Zip
-- 不依赖 %TEMP%
-- 不使用 /MIR，不会删除 FFmpeg 目录中的其他文件
-- 更新时不会删除 Update-FFmpeg.ps1
-- 更新完成后自动验证 FFmpeg 版本和构建类型
-- 提供一个bat脚本用来双击启动PS1脚本，避免执行策略限制
-
-## 环境要求
-
-### Windows
-
-脚本适用于 Windows PowerShell 5.1 及更高版本。
-
-建议使用现代 Windows 系统，以确保系统自带 curl.exe。
-
-### 7-Zip
-
-脚本需要使用 7-Zip 解压 FFmpeg 的 .7z 文件。
-
-默认会自动搜索：
-
-    %ProgramFiles%\7-Zip\7z.exe
-    %ProgramFiles%\7-Zip\7zz.exe
-    %ProgramFiles(x86)%\7-Zip\7z.exe
-    %ProgramFiles(x86)%\7-Zip\7zz.exe
-    %LOCALAPPDATA%\Programs\7-Zip\7z.exe
-    %LOCALAPPDATA%\Programs\7-Zip\7zz.exe
-
-同时也会尝试从 PATH 中寻找：
-
-    7z.exe
-    7zz.exe
-
-如果找不到 7-Zip，脚本会报错并退出。
-
-## 文件
-
-脚本名称：
-
-    Update-FFmpeg.ps1
-
-例如：
-
-    <FFmpeg安装目录>\
-    └─ Update-FFmpeg.ps1
-
-脚本本身不要求必须位于 FFmpeg 安装目录中。
-
-如果脚本没有找到已经安装的 FFmpeg，会使用脚本所在目录作为安装目录。
-
----
-
-# FFmpeg 自动搜索
-
-脚本启动后会自动寻找已经安装的 FFmpeg。
-
-搜索顺序：
-
-    1. Update-FFmpeg.ps1 所在目录
-    2. 该目录的所有子目录
-    3. PATH
-
-脚本不会搜索 PowerShell 当前工作目录，除非它正好也是脚本所在目录。
-
-## 脚本所在目录及子目录
-
-脚本会优先检查：
-
-    <脚本目录>\bin\ffmpeg.exe
-    <脚本目录>\ffmpeg.exe
-
-如果没有找到，再递归搜索脚本所在目录及其子目录中的 ffmpeg.exe。
-
-递归搜索时会忽略：
-
-    .ffmpeg-update 目录中的 ffmpeg.exe
-
-这是为了避免把解压临时目录中的 FFmpeg 误认为已安装版本。
-
-递归搜索会按完整路径长度排序，优先选择路径较短的 ffmpeg.exe。
-
-## PATH 搜索
-
-如果脚本所在目录及子目录没有找到 FFmpeg，脚本会继续搜索 Windows 的 PATH。
-
-脚本会：
-
-- 读取当前进程的 Path 环境变量
-- 展开其中的环境变量
-- 在每个目录中查找 ffmpeg.exe
-- 跳过 WindowsApps 下的 ffmpeg.exe
-- 最后尝试使用 Get-Command ffmpeg.exe 作为补充
-
-WindowsApps 下的 ffmpeg.exe 很可能是 App Execution Alias，不一定代表真正的 FFmpeg 安装目录，因此会被跳过。
-
-## 根目录识别
-
-如果发现：
-
-    <root>\bin\ffmpeg.exe
-
-则：
-
-    <root> = FFmpeg 根目录
-
-如果发现：
-
-    <root>\ffmpeg.exe
-
-则：
-
-    <root> = FFmpeg 根目录
-
-因此 FFmpeg 的安装目录不需要叫 ffmpeg。
-
-以下目录名称都可以：
-
-    FFMPEG
-    ffmpeg-git
-    ffmpeg-2026
-    my-ffmpeg
-    video-tools
-
-只要其中存在：
-
-    bin\ffmpeg.exe
-
-即可自动识别。
-
----
-
-# 构建类型
-
-Gyan.dev 提供多种 FFmpeg Git Build。
-
-本脚本支持：
-
-    Essentials
-    Full
-
-## Auto
-
-默认模式：
-
-    .\Update-FFmpeg.ps1
-
-脚本会读取当前 ffmpeg.exe -version 的信息，并自动判断：
-
-    Essentials
-
-或者：
-
-    Full
-
-判断方式：
-
-- 输出中包含 essentials_build，则识别为 Essentials
-- 输出中包含 full_build，则识别为 Full
-- 如果无法识别，则默认使用 Full
-
-## 强制使用 Essentials
-
-运行：
-
-    .\Update-FFmpeg.ps1 -BuildType Essentials
-
-即使当前安装的是 Full，也会切换到 Essentials。
-
-## 强制使用 Full
-
-运行：
-
-    .\Update-FFmpeg.ps1 -BuildType Full
-
-即使当前安装的是 Essentials，也会切换到 Full。
-
----
-
-# 版本检查
-
-脚本首先从 Gyan.dev 获取最新版本号。
-
-版本号格式类似：
-
-    <版本号>
-
-例如：
-
-    YYYY-MM-DD-git-<hash>
-
-然后读取本机：
-
-    ffmpeg.exe -version
-
-例如本机返回：
-
-    ffmpeg version <版本号>-full_build-www.gyan.dev
-
-脚本会提取：
-
-    <版本号>
-
-并与 Gyan.dev 的版本进行比较。
-
-## 已经是最新版
-
-当以下两个条件同时满足时：
-
-    本地版本 = Gyan.dev 最新版本
-    本地构建类型 = 目标构建类型
-
-脚本会直接结束。
-
-例如：
-
-    [ OK ] Latest Full version: <版本号>
-    [INFO] Installed version: <版本号>
-    [INFO] Installed build: Full
-
-    [ OK ] FFmpeg is already up to date.
-
-此时：
-
-- 不获取 SHA-256
-- 不下载 .7z
-- 不解压
-- 不复制文件
-
-这样可以避免每次运行脚本都重新下载整个 FFmpeg。
-
-## 构建类型不同
-
-例如：
-
-    本地：
-    <版本号>
-    Essentials
-
-    目标：
-    <版本号>
-    Full
-
-虽然版本号相同，但构建类型不同，因此不会认为已经是最新版。
-
-脚本会继续执行更新，将 Essentials 切换为 Full。
-
----
-
-# SHA-256 校验
-
-只有在确认确实需要更新之后，脚本才会从 Gyan.dev 获取 SHA-256。
-
-例如：
-
-    Expected SHA-256:
-    <SHA-256>
-
-下载完成后会重新计算本地文件的 SHA-256。
-
-例如：
-
-    Expected: <SHA-256>
-    Actual:   <SHA-256>
-
-只有两者完全一致时才会继续安装。
-
----
-
-# 下载与断点续传
-
-下载文件使用：
-
-    ffmpeg-git-full.7z
-
-或者：
-
-    ffmpeg-git-essentials.7z
-
-下载过程中使用：
-
-    .part
-
-文件。
-
-例如：
-
-    ffmpeg-git-full.7z.part
-
-只有 curl 正常完成下载后，才会变成：
-
-    ffmpeg-git-full.7z
-
-## 下载中断
-
-如果网络中断：
-
-    ffmpeg-git-full.7z.part
-
-不会删除。
-
-下次运行脚本时，会尝试继续下载，而不是从头开始。
-
-使用的 curl 断点续传参数为：
-
-    -C -
-
-脚本使用的 curl 参数包括：
-
-    --fail
-    --location
-    --retry 5
-    --retry-delay 3
-    --connect-timeout 30
-    -C -
-    --output <part文件>
-    <下载地址>
-
-## 已有部分下载
-
-如果脚本发现已经存在 .part 文件，会先计算它的 SHA-256。
-
-如果 .part 本身已经是完整且正确的归档文件，脚本会直接把它恢复为正式 .7z，不再重新下载。
-
-如果 .part 不完整，则使用 curl 续传。
-
----
-
-# 已有归档文件
-
-如果脚本发现已经存在：
-
-    ffmpeg-git-full.7z
-
-不会直接重新下载。
-
-首先会计算 SHA-256。
-
-如果哈希正确：
-
-    [ OK ] Existing archive is valid.
-    [INFO] Skipping download.
-
-然后直接使用这个归档文件。
-
-如果哈希不正确：
-
-    [WARN] SHA-256 verification failed.
-
-脚本会删除损坏的 .7z，然后重新下载。
-
----
-
-# 安装目录结构
-
-脚本支持多种 FFmpeg 目录结构。
-
-## 仅有 bin
-
-例如：
-
-    <FFmpeg安装目录>\
-    ├─ bin\
-    │  ├─ ffmpeg.exe
-    │  ├─ ffprobe.exe
-    │  └─ ffplay.exe
-    └─ Update-FFmpeg.ps1
-
-这种情况下更新时只替换：
-
-    bin\*.exe
-
-不会修改其他文件。
-
-## 完整 FFmpeg 目录
-
-如果目标目录同时存在：
-
-    bin
-    doc
-    presets
-    LICENSE
-    README.txt
-
-例如：
-
-    <FFmpeg安装目录>\
-    ├─ bin\
-    │  ├─ ffmpeg.exe
-    │  ├─ ffprobe.exe
-    │  └─ ffplay.exe
-    ├─ doc\
-    ├─ presets\
-    ├─ LICENSE
-    ├─ README.txt
-    └─ Update-FFmpeg.ps1
-
-脚本会认为这是完整 FFmpeg 目录。
-
-更新时会替换：
-
-    bin
-    doc
-    presets
-    LICENSE
-    README.txt
-
-但是：
-
-    Update-FFmpeg.ps1
-
-不会被删除或覆盖。
-
-脚本不会删除目标目录中其他无关文件。
-
-## 非标准目录名称
-
-目录名称不影响识别。
-
-例如：
-
-    <自定义FFmpeg目录>\
-    ├─ bin\
-    ├─ doc\
-    ├─ presets\
-    ├─ LICENSE
-    └─ README.txt
-
-脚本仍然可以识别。
-
-判断 FFmpeg 安装目录的关键是：
-
-    bin\ffmpeg.exe
-
-而不是目录名称。
-
----
-
-# 安装流程
-
-一次正常更新大致经过以下步骤：
-
-    查找 FFmpeg
-          ↓
-    识别安装目录
-          ↓
-    识别 Essentials / Full
-          ↓
-    查询 Gyan.dev 最新版本
-          ↓
-    比较本地版本和构建类型
-          ↓
-    已经是最新？
-       ┌──┴──┐
-      是     否
-      ↓      ↓
-    退出   获取 SHA-256
-             ↓
-         检查已有 .7z
-             ↓
-         检查已有 .part
-             ↓
-          下载/续传
-             ↓
-          SHA-256 校验
-             ↓
-            解压
-             ↓
-         检查 FFmpeg 文件
-             ↓
-           安装
-             ↓
-        验证版本和构建类型
-             ↓
-           清理文件
-             ↓
-           更新完成
-
-安装时会检查解压后的 bin 目录中是否存在：
-
-    ffmpeg.exe
-    ffprobe.exe
-    ffplay.exe
-
-缺少任意一个都会导致安装失败，并保留 .7z。
-
----
-
-# 更新失败时的文件保留策略
-
-为了避免因为网络中断或安装失败导致无法继续更新，本脚本不会随意删除下载文件。
-
-### 下载中断
-
-保留：
-
-    ffmpeg-git-full.7z.part
-
-下一次运行时可以继续下载。
-
-### SHA-256 错误
-
-不会安装错误文件。
-
-错误的 .7z 会被删除并重新下载。
-
-### 解压失败
-
-保留：
-
-    ffmpeg-git-full.7z
-
-方便后续再次运行。
-
-### 安装失败
-
-保留：
-
-    ffmpeg-git-full.7z
-
-不会进行自动回滚。
-
-### 安装成功
-
-安装成功并验证通过后，会删除：
-
-    ffmpeg-git-full.7z
-    .ffmpeg-update
-
----
-
-# 工作目录
-
-脚本不会使用：
-
-    %TEMP%
-
-解压过程在 FFmpeg 安装目录内部建立：
-
-    .ffmpeg-update
-
-例如：
-
-    <FFmpeg安装目录>\
-    ├─ .ffmpeg-update\
-    ├─ bin\
-    └─ Update-FFmpeg.ps1
-
-安装成功后：
-
-    .ffmpeg-update
-
-会自动删除。
-
----
-
-# 安全的文件替换
-
-脚本不会使用：
-
-    robocopy /MIR
-
-因为 /MIR 会按照源目录镜像目标目录，可能删除目标目录中原本存在的其他文件。
-
-本脚本只替换 FFmpeg 自身需要更新的内容，因此不会因为更新 FFmpeg 而删除：
-
-    Update-FFmpeg.ps1
-
-或者其他无关文件。
-
-安装时：
-
-- 始终替换目标 bin 目录中的 .exe 文件
-- 如果目标是完整布局，则同时复制 doc、presets、LICENSE、README.txt
-- 复制目录时使用 Copy-Item -Recurse -Force
-- 不会主动删除目标目录中多余的文件
-
----
-
-# 使用方法
-
-最简单的运行方式：
-
-    .\Update-FFmpeg.ps1
-
-自动检测：
-
-    Essentials / Full
-
-并自动更新。
-
-强制使用 Full：
-
-    .\Update-FFmpeg.ps1 -BuildType Full
-
-强制使用 Essentials：
-
-    .\Update-FFmpeg.ps1 -BuildType Essentials
-
----
-
-# PowerShell 执行策略
-
-如果系统禁止执行 .ps1，可以使用：
-
-    powershell.exe -ExecutionPolicy Bypass -File .\Update-FFmpeg.ps1
-
-或者根据自己的系统策略调整 PowerShell Execution Policy。
-
----
-
-# 示例输出
-
-## 已经是最新版
-
-    ============================================
-     FFmpeg Git Auto Updater
-     Gyan.dev
-    ============================================
-
-    [INFO] Found FFmpeg in current directory tree:
-           <FFmpeg安装目录>\bin\ffmpeg.exe
-
-    [INFO] Detected FFmpeg root directory:
-           <FFmpeg安装目录>
-
-    [INFO] Installed version:
-           <版本号>
-
-    [INFO] Installed build type:
-           Full
-
-    [INFO] Build type selection: Auto
-    [ OK ] Detected installed build type: Full
-    [ OK ] Target build type: Full
-
-    [INFO] Checking Gyan.dev for the latest Full Git build...
-    [ OK ] Latest Full version: <版本号>
-
-    [ OK ] FFmpeg is already up to date.
-           Build:    Full
-           Version:  <版本号>
-           Location: <FFmpeg安装目录>
-
-这种情况下不会下载 FFmpeg。
-
----
-
-# 项目目录示例
-
-推荐的简单目录：
-
-    <FFmpeg安装目录>\
-    └─ Update-FFmpeg.ps1
-
-如果 FFmpeg 已经安装：
-
-    <FFmpeg安装目录>\
-    ├─ bin\
-    │  ├─ ffmpeg.exe
-    │  ├─ ffprobe.exe
-    │  └─ ffplay.exe
-    ├─ doc\
-    ├─ presets\
-    ├─ LICENSE
-    ├─ README.txt
-    └─ Update-FFmpeg.ps1
-
-也可以使用非标准目录名称：
-
-    <自定义FFmpeg目录>\
-    ├─ bin\
-    ├─ doc\
-    ├─ presets\
-    ├─ LICENSE
-    ├─ README.txt
-    └─ ...
-
-只要 ffmpeg.exe 能被脚本搜索到即可。
-
----
-
-# 注意事项
-
-首次使用时建议确保：
-
-1. Windows 可以正常运行 curl.exe
-2. 已安装 7-Zip
-3. 网络可以访问 Gyan.dev
-4. FFmpeg 没有被其他程序长期占用
-
-尤其是在 FFmpeg 正被播放器或其他程序使用的情况下，更新某些 .exe 文件可能会失败。
-
-关闭正在使用 FFmpeg 的程序后再次运行即可。
-
-脚本成功时返回退出码 0，失败时返回退出码 1。
-
----
-
-# 数据来源
-
-FFmpeg Git Builds：
-
-Gyan.dev FFmpeg Builds
-
-https://www.gyan.dev/ffmpeg/builds/
-
-FFmpeg 官方项目：
-
-https://ffmpeg.org/
-
----
-
-# License
-
-本项目脚本本身的授权方式由项目维护者自行决定。
-
-FFmpeg 本身遵循其对应的自由软件许可证。具体许可证和构建选项请以 FFmpeg 官方项目及所使用 Gyan.dev 构建包中的 LICENSE / README.txt 为准。
+[CmdletBinding()]
+param(
+    [ValidateSet('Auto', 'Essentials', 'Full')]
+    [string]$BuildType = 'Auto'
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Write-Info {
+    param([string]$Message)
+    Write-Host "[INFO] $Message"
+}
+
+function Write-Ok {
+    param([string]$Message)
+    Write-Host "[ OK ] $Message"
+}
+
+function Write-Warn {
+    param([string]$Message)
+    Write-Host "[WARN] $Message"
+}
+
+function Write-Err {
+    param([string]$Message)
+    Write-Host "[ERR ] $Message" -ForegroundColor Red
+}
+
+function Get-ScriptDirectory {
+    if ($PSScriptRoot) {
+        return $PSScriptRoot
+    }
+
+    return (Split-Path -Parent $MyInvocation.MyCommand.Definition)
+}
+
+function Get-CanonicalPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    return [System.IO.Path]::GetFullPath($Path)
+}
+
+function Get-UniquePaths {
+    param([string[]]$Paths)
+
+    $seen = @{}
+    $result = New-Object System.Collections.Generic.List[string]
+
+    foreach ($path in $Paths) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $key = $path.ToLowerInvariant()
+        if (-not $seen.ContainsKey($key)) {
+            $seen[$key] = $true
+            [void]$result.Add($path)
+        }
+    }
+
+    return $result.ToArray()
+}
+
+function Get-FFmpegInfo {
+    param([Parameter(Mandatory = $true)][string]$FFmpegPath)
+
+    if (-not (Test-Path -LiteralPath $FFmpegPath -PathType Leaf)) {
+        return $null
+    }
+
+    $lines = & $FFmpegPath -version 2>$null
+    if (-not $lines -or $lines.Count -eq 0) {
+        return $null
+    }
+
+    $firstLine = "$($lines[0])"
+    $allText = ($lines -join "`n")
+    $version = $null
+    $coreVersion = $null
+
+    if ($firstLine -match '^ffmpeg\s+version\s+([^\s]+)') {
+        $version = $matches[1]
+    }
+
+    if ($version -and ($version -match '^(.*?)-(?:full|essentials)_build(?:-.+)?$')) {
+        $coreVersion = $matches[1]
+    } else {
+        $coreVersion = $version
+    }
+
+    $detectedBuild = $null
+    if ($allText -match 'full_build') {
+        $detectedBuild = 'Full'
+    } elseif ($allText -match 'essentials_build') {
+        $detectedBuild = 'Essentials'
+    }
+
+    [PSCustomObject]@{
+        VersionToken = $version
+        CoreVersion  = $coreVersion
+        BuildType    = $detectedBuild
+    }
+}
+
+function Get-FFmpegRoot {
+    param([Parameter(Mandatory = $true)][string]$FFmpegPath)
+
+    $exeDirectory = Split-Path -Parent $FFmpegPath
+    if ((Split-Path -Leaf $exeDirectory).ToLowerInvariant() -eq 'bin') {
+        return (Split-Path -Parent $exeDirectory)
+    }
+
+    return $exeDirectory
+}
+
+function Find-InstalledFFmpeg {
+    param([Parameter(Mandatory = $true)][string]$ScriptDirectory)
+
+    $candidatePaths = New-Object System.Collections.Generic.List[string]
+
+    foreach ($direct in @(
+        (Join-Path $ScriptDirectory 'bin\ffmpeg.exe'),
+        (Join-Path $ScriptDirectory 'ffmpeg.exe')
+    )) {
+        if (Test-Path -LiteralPath $direct -PathType Leaf) {
+            [void]$candidatePaths.Add((Get-CanonicalPath -Path $direct))
+        }
+    }
+
+    $recursive = Get-ChildItem -LiteralPath $ScriptDirectory -Filter 'ffmpeg.exe' -File -Recurse -ErrorAction SilentlyContinue
+    foreach ($item in $recursive) {
+        $fullPath = (Get-CanonicalPath -Path $item.FullName)
+        if ($fullPath -match '(?i)\\\.ffmpeg-update\\') {
+            continue
+        }
+        if ($fullPath -match '(?i)\\windowsapps\\') {
+            continue
+        }
+        [void]$candidatePaths.Add($fullPath)
+    }
+
+    if ($env:Path) {
+        $pathEntries = $env:Path -split ';'
+        foreach ($entry in $pathEntries) {
+            if ([string]::IsNullOrWhiteSpace($entry)) {
+                continue
+            }
+
+            $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim())
+            if (-not (Test-Path -LiteralPath $expanded -PathType Container)) {
+                continue
+            }
+
+            $ffmpegInPath = Join-Path $expanded 'ffmpeg.exe'
+            if (Test-Path -LiteralPath $ffmpegInPath -PathType Leaf) {
+                $fullPath = (Get-CanonicalPath -Path $ffmpegInPath)
+                if ($fullPath -match '(?i)\\windowsapps\\') {
+                    continue
+                }
+                [void]$candidatePaths.Add($fullPath)
+            }
+        }
+    }
+
+    $cmd = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source) {
+        $cmdPath = (Get-CanonicalPath -Path $cmd.Source)
+        if (($cmdPath -notmatch '(?i)\\windowsapps\\') -and (Test-Path -LiteralPath $cmdPath -PathType Leaf)) {
+            [void]$candidatePaths.Add($cmdPath)
+        }
+    }
+
+    $ordered = @(Get-UniquePaths -Paths ($candidatePaths.ToArray()) |
+        Sort-Object @{ Expression = { $_.Length } }, @{ Expression = { $_ } })
+
+    if ($ordered.Count -gt 0) {
+        return $ordered[0]
+    }
+
+    return $null
+}
+
+function Find-7Zip {
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
+        if ([string]::IsNullOrWhiteSpace($base)) {
+            continue
+        }
+
+        foreach ($relative in @(
+            '7-Zip\7z.exe',
+            '7-Zip\7zz.exe',
+            'Programs\7-Zip\7z.exe',
+            'Programs\7-Zip\7zz.exe'
+        )) {
+            $path = Join-Path $base $relative
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                [void]$candidates.Add((Get-CanonicalPath -Path $path))
+            }
+        }
+    }
+
+    foreach ($commandName in @('7z.exe', '7zz.exe')) {
+        $cmd = Get-Command $commandName -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source) {
+            [void]$candidates.Add((Get-CanonicalPath -Path $cmd.Source))
+        }
+    }
+
+    $unique = @(Get-UniquePaths -Paths ($candidates.ToArray()))
+    if ($unique.Count -gt 0) {
+        return $unique[0]
+    }
+
+    return $null
+}
+
+function Invoke-TextRequest {
+    param([Parameter(Mandatory = $true)][string]$Uri)
+
+    $response = Invoke-WebRequest -Uri $Uri -UseBasicParsing
+    return $response.Content.Trim()
+}
+
+function Get-BuildMetadata {
+    param([Parameter(Mandatory = $true)][ValidateSet('Essentials', 'Full')][string]$TargetBuild)
+
+    $baseUrl = 'https://www.gyan.dev/ffmpeg/builds'
+    $buildKey = if ($TargetBuild -eq 'Full') { 'full' } else { 'essentials' }
+    $archiveName = "ffmpeg-git-$buildKey.7z"
+
+    $version = Invoke-TextRequest -Uri "$baseUrl/git-version"
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        throw 'Could not read latest version from Gyan.dev.'
+    }
+
+    $shaLine = Invoke-TextRequest -Uri "$baseUrl/$archiveName.sha256"
+    if ($shaLine -notmatch '([A-Fa-f0-9]{64})') {
+        throw "Could not parse SHA-256 from $archiveName.sha256"
+    }
+
+    [PSCustomObject]@{
+        TargetBuild = $TargetBuild
+        Version     = $version
+        ArchiveName = $archiveName
+        ArchiveUrl  = "$baseUrl/$archiveName"
+        ExpectedSha = $matches[1].ToLowerInvariant()
+    }
+}
+
+function Get-FileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Test-ArchiveHash {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedSha
+    )
+
+    $actualSha = Get-FileSha256 -Path $Path
+    if (-not $actualSha) {
+        return $false
+    }
+
+    Write-Info "SHA-256 check for: $Path"
+    Write-Info "Expected: $ExpectedSha"
+    Write-Info "Actual:   $actualSha"
+
+    return ($actualSha -ieq $ExpectedSha)
+}
+
+function Download-Archive {
+    param(
+        [Parameter(Mandatory = $true)]$Metadata,
+        [Parameter(Mandatory = $true)][string]$DownloadDirectory
+    )
+
+    $archivePath = Join-Path $DownloadDirectory $Metadata.ArchiveName
+    $partPath = "$archivePath.part"
+
+    if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+        if (Test-ArchiveHash -Path $archivePath -ExpectedSha $Metadata.ExpectedSha) {
+            Write-Ok 'Existing archive is valid. Skipping download.'
+            return $archivePath
+        }
+
+        Write-Warn 'Existing archive SHA-256 mismatch. Removing the invalid archive.'
+        Remove-Item -LiteralPath $archivePath -Force
+    }
+
+    if (Test-Path -LiteralPath $partPath -PathType Leaf) {
+        if (Test-ArchiveHash -Path $partPath -ExpectedSha $Metadata.ExpectedSha) {
+            Write-Ok 'Existing .part file is already complete. Restoring archive file.'
+            if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+                Remove-Item -LiteralPath $archivePath -Force
+            }
+            Rename-Item -LiteralPath $partPath -NewName (Split-Path -Leaf $archivePath) -Force
+            return $archivePath
+        }
+
+        Write-Info 'Resuming download from existing .part file.'
+    }
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if (-not $curl -or -not $curl.Source) {
+        throw 'curl.exe not found. Install curl or use a Windows version that includes curl.exe.'
+    }
+
+    Write-Info "Downloading archive: $($Metadata.ArchiveUrl)"
+    & $curl.Source @(
+        '--fail',
+        '--location',
+        '--retry', '5',
+        '--retry-delay', '3',
+        '--connect-timeout', '30',
+        '-C', '-',
+        '--output', $partPath,
+        $Metadata.ArchiveUrl
+    )
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "curl download failed with exit code $LASTEXITCODE. The .part file was kept."
+    }
+
+    if (-not (Test-Path -LiteralPath $partPath -PathType Leaf)) {
+        throw 'Download finished but .part file was not found.'
+    }
+
+    if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+        Remove-Item -LiteralPath $archivePath -Force
+    }
+
+    Rename-Item -LiteralPath $partPath -NewName (Split-Path -Leaf $archivePath) -Force
+
+    if (-not (Test-ArchiveHash -Path $archivePath -ExpectedSha $Metadata.ExpectedSha)) {
+        throw 'Downloaded archive failed SHA-256 validation. Installation aborted.'
+    }
+
+    return $archivePath
+}
+
+function Expand-ArchiveWith7Zip {
+    param(
+        [Parameter(Mandatory = $true)][string]$ArchivePath,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$SevenZipPath
+    )
+
+    $extractDirectory = Join-Path $WorkingDirectory 'extract'
+    if (Test-Path -LiteralPath $extractDirectory) {
+        Remove-Item -LiteralPath $extractDirectory -Recurse -Force
+    }
+    [void](New-Item -ItemType Directory -Path $extractDirectory -Force)
+
+    Write-Info "Extracting archive with 7-Zip: $SevenZipPath"
+    & $SevenZipPath @('x', '-y', "-o$extractDirectory", $ArchivePath)
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "7-Zip extraction failed with exit code $LASTEXITCODE"
+    }
+
+    return $extractDirectory
+}
+
+function Find-ExtractedRoot {
+    param([Parameter(Mandatory = $true)][string]$ExtractDirectory)
+
+    $bins = Get-ChildItem -LiteralPath $ExtractDirectory -Filter 'ffmpeg.exe' -File -Recurse -ErrorAction Stop |
+        Where-Object { (Split-Path -Leaf (Split-Path -Parent $_.FullName)).ToLowerInvariant() -eq 'bin' }
+
+    $candidateRoots = New-Object System.Collections.Generic.List[string]
+
+    foreach ($ffmpegExe in $bins) {
+        $binDirectory = Split-Path -Parent $ffmpegExe.FullName
+        $root = Split-Path -Parent $binDirectory
+        $ffprobe = Join-Path $binDirectory 'ffprobe.exe'
+        $ffplay = Join-Path $binDirectory 'ffplay.exe'
+
+        if ((Test-Path -LiteralPath $ffprobe -PathType Leaf) -and (Test-Path -LiteralPath $ffplay -PathType Leaf)) {
+            [void]$candidateRoots.Add((Get-CanonicalPath -Path $root))
+        }
+    }
+
+    $orderedRoots = @(Get-UniquePaths -Paths ($candidateRoots.ToArray()) |
+        Sort-Object @{ Expression = { $_.Length } }, @{ Expression = { $_ } })
+
+    if ($orderedRoots.Count -eq 0) {
+        throw 'Malformed archive: required FFmpeg binaries were not found after extraction.'
+    }
+
+    return $orderedRoots[0]
+}
+
+function Install-FFmpegFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [Parameter(Mandatory = $true)][string]$TargetRoot
+    )
+
+    $sourceBin = Join-Path $SourceRoot 'bin'
+    $targetBin = Join-Path $TargetRoot 'bin'
+
+    foreach ($required in @('ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceBin $required) -PathType Leaf)) {
+            throw "Malformed archive: missing $required in extracted bin directory."
+        }
+    }
+
+    [void](New-Item -ItemType Directory -Path $targetBin -Force)
+
+    Write-Info 'Installing FFmpeg binaries...'
+    Copy-Item -Path (Join-Path $sourceBin '*') -Destination $targetBin -Recurse -Force -ErrorAction Stop
+
+    foreach ($item in @('doc', 'presets', 'LICENSE', 'README.txt')) {
+        $sourcePath = Join-Path $SourceRoot $item
+        if (-not (Test-Path -LiteralPath $sourcePath)) {
+            continue
+        }
+
+        $destinationPath = Join-Path $TargetRoot $item
+
+        if (Test-Path -LiteralPath $sourcePath -PathType Container) {
+            [void](New-Item -ItemType Directory -Path $destinationPath -Force)
+            Copy-Item -Path (Join-Path $sourcePath '*') -Destination $destinationPath -Recurse -Force -ErrorAction Stop
+        } else {
+            Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force -ErrorAction Stop
+        }
+    }
+}
+
+function Confirm-InstalledVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)]$Metadata
+    )
+
+    $ffmpegExe = Join-Path $TargetRoot 'bin\ffmpeg.exe'
+    if (-not (Test-Path -LiteralPath $ffmpegExe -PathType Leaf)) {
+        throw 'Installation verification failed: bin\ffmpeg.exe not found.'
+    }
+
+    $info = Get-FFmpegInfo -FFmpegPath $ffmpegExe
+    if (-not $info -or [string]::IsNullOrWhiteSpace($info.CoreVersion)) {
+        throw 'Installation verification failed: could not read ffmpeg version.'
+    }
+
+    if ($info.CoreVersion -ne $Metadata.Version) {
+        throw "Installation verification failed: expected version $($Metadata.Version), found $($info.CoreVersion)."
+    }
+
+    if ($info.BuildType -ne $Metadata.TargetBuild) {
+        throw "Installation verification failed: expected build $($Metadata.TargetBuild), found $($info.BuildType)."
+    }
+
+    Write-Ok 'Installation verification passed.'
+    Write-Info "Build:    $($info.BuildType)"
+    Write-Info "Version:  $($info.CoreVersion)"
+    Write-Info "Location: $TargetRoot"
+}
+
+function Invoke-Main {
+    Write-Host '============================================'
+    Write-Host ' FFmpeg Git Auto Updater'
+    Write-Host ' Gyan.dev'
+    Write-Host '============================================'
+    Write-Host ''
+
+    $scriptDirectory = Get-CanonicalPath -Path (Get-ScriptDirectory)
+    $sevenZip = Find-7Zip
+
+    if (-not $sevenZip) {
+        throw '7-Zip (7z.exe or 7zz.exe) was not found. Please install 7-Zip and retry.'
+    }
+
+    Write-Ok "Using 7-Zip: $sevenZip"
+
+    $installedFFmpeg = Find-InstalledFFmpeg -ScriptDirectory $scriptDirectory
+    $installRoot = $scriptDirectory
+    $installedInfo = $null
+
+    if ($installedFFmpeg) {
+        $installRoot = Get-CanonicalPath -Path (Get-FFmpegRoot -FFmpegPath $installedFFmpeg)
+        $installedInfo = Get-FFmpegInfo -FFmpegPath $installedFFmpeg
+
+        Write-Info "Found FFmpeg: $installedFFmpeg"
+        Write-Info "Detected FFmpeg root: $installRoot"
+
+        if ($installedInfo -and $installedInfo.CoreVersion) {
+            Write-Info "Installed version: $($installedInfo.CoreVersion)"
+        }
+        if ($installedInfo -and $installedInfo.BuildType) {
+            Write-Info "Installed build type: $($installedInfo.BuildType)"
+        }
+    } else {
+        Write-Warn 'No existing FFmpeg installation found. Script directory will be used as install root.'
+        Write-Info "Install root: $installRoot"
+    }
+
+    $targetBuild = $null
+    if ($BuildType -eq 'Auto') {
+        if ($installedInfo -and $installedInfo.BuildType) {
+            $targetBuild = $installedInfo.BuildType
+            Write-Ok "Build type selection: Auto -> $targetBuild"
+        } else {
+            $targetBuild = 'Full'
+            Write-Warn 'Build type selection: Auto -> defaulting to Full.'
+        }
+    } else {
+        $targetBuild = $BuildType
+        Write-Ok "Build type selection: Forced -> $targetBuild"
+    }
+
+    Write-Info "Checking Gyan.dev for latest $targetBuild Git build..."
+    $metadata = Get-BuildMetadata -TargetBuild $targetBuild
+
+    Write-Ok "Latest $targetBuild version: $($metadata.Version)"
+    Write-Info "Expected SHA-256: $($metadata.ExpectedSha)"
+
+    if ($installedInfo -and $installedInfo.CoreVersion -and $installedInfo.BuildType) {
+        if (($installedInfo.CoreVersion -eq $metadata.Version) -and ($installedInfo.BuildType -eq $targetBuild)) {
+            Write-Ok 'FFmpeg is already up to date.'
+            return
+        }
+    }
+
+    $workingDirectory = Join-Path $installRoot '.ffmpeg-update'
+    [void](New-Item -ItemType Directory -Path $workingDirectory -Force)
+
+    $archivePath = Download-Archive -Metadata $metadata -DownloadDirectory $installRoot
+    Write-Ok "Archive ready: $archivePath"
+
+    $extractDirectory = Expand-ArchiveWith7Zip -ArchivePath $archivePath -WorkingDirectory $workingDirectory -SevenZipPath $sevenZip
+    $sourceRoot = Find-ExtractedRoot -ExtractDirectory $extractDirectory
+
+    Write-Info "Extracted source root: $sourceRoot"
+
+    Install-FFmpegFiles -SourceRoot $sourceRoot -TargetRoot $installRoot
+    Confirm-InstalledVersion -TargetRoot $installRoot -Metadata $metadata
+
+    if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+        Remove-Item -LiteralPath $archivePath -Force
+    }
+
+    $partPath = "$archivePath.part"
+    if (Test-Path -LiteralPath $partPath -PathType Leaf) {
+        Remove-Item -LiteralPath $partPath -Force
+    }
+
+    if (Test-Path -LiteralPath $workingDirectory) {
+        Remove-Item -LiteralPath $workingDirectory -Recurse -Force
+    }
+
+    Write-Ok 'Update completed successfully.'
+}
+
+try {
+    Invoke-Main
+    exit 0
+} catch {
+    Write-Err $_.Exception.Message
+    Write-Err 'Update failed. Close programs using FFmpeg and retry.'
+    exit 1
+}
